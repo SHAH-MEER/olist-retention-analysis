@@ -20,10 +20,14 @@ execute:
 import os
 from pathlib import Path
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
+from plotly.subplots import make_subplots
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
+pio.renderers.default = "notebook"
 load_dotenv(Path("..") / ".env")
 
 engine = create_engine(
@@ -39,8 +43,15 @@ PLOTS_DIR = Path("..") / "plots"
 PLOTS_DIR.mkdir(exist_ok=True)
 ANALYSIS_DIR = Path("..") / "sql" / "analysis"
 
+BLUE = "#2c7fb8"
+GRAY = "#c9c9c9"
+
 def run_sql(filename):
     return pd.read_sql(text((ANALYSIS_DIR / filename).read_text()), engine)
+
+def save_fig(fig, name):
+    fig.write_image(PLOTS_DIR / name, width=800, height=500, scale=2)
+    return fig
 ```
 
 ## Executive Summary
@@ -76,21 +87,55 @@ All of the queries below read from two views built on top of the raw schema: `fa
 
 ## Analysis
 
+### What does the order pipeline look like?
+
+```{python}
+status = run_sql("08_order_status_distribution.sql")
+
+fig = px.bar(
+    status,
+    x="order_status",
+    y="orders",
+    category_orders={"order_status": status["order_status"].tolist()},
+    color_discrete_sequence=[BLUE],
+)
+fig.update_layout(title="Order status distribution", xaxis_title="", yaxis_title="Orders")
+save_fig(fig, "order_status_distribution.png")
+```
+
+Almost all orders (96,478 of 99,441) reach delivered status. Canceled and unavailable orders together account for under 1,300 orders, too small a group to explain the retention gap on their own. The rest of this report focuses on delivered orders and what happens to customers after that point.
+
+### At a glance
+
+```{python}
+delivery = run_sql("02_delivery_vs_retention.sql")
+reviews = run_sql("03_review_score_vs_retention.sql")
+payment_type = run_sql("05_payment_type_vs_retention.sql")
+
+overview = make_subplots(rows=1, cols=3, subplot_titles=["Delivery", "Review score", "Payment type"])
+overview.add_trace(go.Bar(x=delivery["delivery_status"], y=delivery["repeat_rate_pct"], marker_color=BLUE), row=1, col=1)
+overview.add_trace(go.Bar(x=reviews["first_order_review_score"].astype(str), y=reviews["repeat_rate_pct"], marker_color=BLUE), row=1, col=2)
+overview.add_trace(go.Bar(x=payment_type["first_order_payment_type"], y=payment_type["repeat_rate_pct"], marker_color=BLUE), row=1, col=3)
+overview.update_layout(title="Repeat rate at a glance", showlegend=False, height=400)
+save_fig(overview, "overview_small_multiples.png")
+```
+
+Three candidate explanations, side by side. Delivery and review score barely move the bars. Payment type is the one panel with a clear outlier. The detailed sections below walk through each of these, plus category, spend, geography, and time.
+
 ### How low is retention, really?
 
 ```{python}
 naive = run_sql("01b_naive_repeat_rate_contrast.sql")
 headline = run_sql("01_repeat_purchase_rate.sql")
 
-fig, ax = plt.subplots(figsize=(5, 4))
-ax.bar(["Naive (by customer_id)", "Correct (by customer_unique_id)"],
-       [naive["naive_repeat_rate_pct"][0], headline["repeat_rate_pct"][0]],
-       color=["#c9c9c9", "#2c7fb8"])
-ax.set_ylabel("Repeat purchase rate (%)")
-ax.set_title("Repeat rate depends entirely on how you group customers")
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "repeat_rate_headline.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.bar(
+    x=["Naive (by customer_id)", "Correct (by customer_unique_id)"],
+    y=[naive["naive_repeat_rate_pct"][0], headline["repeat_rate_pct"][0]],
+    color=["Naive", "Correct"],
+    color_discrete_sequence=[GRAY, BLUE],
+)
+fig.update_layout(title="Repeat rate depends entirely on how you group customers", xaxis_title="", yaxis_title="Repeat purchase rate (%)", showlegend=False)
+save_fig(fig, "repeat_rate_headline.png")
 ```
 
 Grouping by the wrong ID hides the entire phenomenon. Grouped correctly, 3.12% of customers return, and that is the number this report investigates.
@@ -100,13 +145,9 @@ Grouping by the wrong ID hides the entire phenomenon. Grouped correctly, 3.12% o
 ```{python}
 delivery = run_sql("02_delivery_vs_retention.sql")
 
-fig, ax = plt.subplots(figsize=(5, 4))
-ax.bar(delivery["delivery_status"], delivery["repeat_rate_pct"], color="#2c7fb8")
-ax.set_ylabel("Repeat purchase rate (%)")
-ax.set_title("Repeat rate by first-order delivery outcome")
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "delivery_vs_retention.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.bar(delivery, x="delivery_status", y="repeat_rate_pct", color_discrete_sequence=[BLUE])
+fig.update_layout(title="Repeat rate by first-order delivery outcome", xaxis_title="", yaxis_title="Repeat purchase rate (%)")
+save_fig(fig, "delivery_vs_retention.png")
 ```
 
 There is a real gap here, but it is a modest one. Customers whose first order arrived late return at 2.56%, compared with 3.13% for customers whose first order arrived on time. Even so, the on time group still only returns 3% of the time. Delivery speed has some effect on retention, but it cannot be the primary explanation for a 97% non-return rate.
@@ -116,14 +157,10 @@ There is a real gap here, but it is a modest one. Customers whose first order ar
 ```{python}
 reviews = run_sql("03_review_score_vs_retention.sql")
 
-fig, ax = plt.subplots(figsize=(5, 4))
-ax.bar(reviews["first_order_review_score"].astype(str), reviews["repeat_rate_pct"], color="#2c7fb8")
-ax.set_xlabel("First-order review score")
-ax.set_ylabel("Repeat purchase rate (%)")
-ax.set_title("Repeat rate by first-order review score")
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "review_score_vs_retention.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.bar(reviews, x="first_order_review_score", y="repeat_rate_pct", color_discrete_sequence=[BLUE])
+fig.update_xaxes(type="category")
+fig.update_layout(title="Repeat rate by first-order review score", xaxis_title="First-order review score", yaxis_title="Repeat purchase rate (%)")
+save_fig(fig, "review_score_vs_retention.png")
 ```
 
 No. The relationship is flat and non-monotonic. Customers who left a 1-star review return at about the same rate as customers who left a 5-star review. Stated satisfaction on the first order is not predicting return behavior.
@@ -135,30 +172,47 @@ category = run_sql("04_category_vs_retention.sql")
 top = category.sort_values("repeat_rate_pct", ascending=False).head(10)
 print(top[["first_order_category", "repeat_rate_pct", "customers"]])
 
-fig, ax = plt.subplots(figsize=(7, 5))
-ax.barh(top["first_order_category"], top["repeat_rate_pct"], color="#2c7fb8")
-ax.set_xlabel("Repeat purchase rate (%)")
-ax.set_title("Top 10 first-order categories by repeat rate")
-ax.invert_yaxis()
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "category_vs_retention.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.bar(top, x="repeat_rate_pct", y="first_order_category", orientation="h", color_discrete_sequence=[BLUE])
+fig.update_yaxes(autorange="reversed")
+fig.update_layout(title="Top 10 first-order categories by repeat rate", xaxis_title="Repeat purchase rate (%)", yaxis_title="")
+save_fig(fig, "category_vs_retention.png")
 ```
 
 The top categories by repeat rate are fashio_female_clothing at 10.53% (38 customers), home_appliances at 9.14% (689 customers), and furniture_mattress_and_upholstery at 8.11% (37 customers). None of these read as naturally repeat purchase categories. Home appliances and furniture, mattresses especially, are durable goods that a household typically buys once and does not need again for years, and fashion clothing sits on a tiny base of 38 customers. Several of the top ten carry small sample sizes, so a handful of returning customers can swing the rate considerably. The category signal is real but noisy, and it does not point to an obvious cross-sell or loyalty story the way a consumables or personal care category topping this list would.
+
+### Does how much they spent explain it?
+
+```{python}
+value_dist = run_sql("09_first_order_value_by_repeat.sql")
+value_dist["group"] = value_dist["is_repeat_customer"].map({True: "Repeat customer", False: "One-time customer"})
+value_dist["bucket_start"] = (value_dist["value_bucket"] - 1) * 25
+
+totals = value_dist.groupby("group")["customers"].sum()
+value_dist["group_total"] = value_dist["group"].map(totals)
+value_dist["pct_within_group"] = 100 * value_dist["customers"] / value_dist["group_total"]
+
+fig = px.bar(
+    value_dist,
+    x="bucket_start",
+    y="pct_within_group",
+    color="group",
+    barmode="group",
+    color_discrete_sequence=[GRAY, BLUE],
+)
+fig.update_layout(title="First-order value distribution: repeat vs one-time customers", xaxis_title="First-order value (BRL, capped at 500)", yaxis_title="Share of group (%)")
+save_fig(fig, "first_order_value_distribution.png")
+```
+
+The two distributions sit almost on top of each other. One-time customers spent a median of 105.66 BRL on their first order; repeat customers spent a median of 101.19 BRL, slightly less, not more. Spending more upfront does not buy loyalty here, and spending less does not explain the drop-off either.
 
 ### Does the payment experience explain it?
 
 ```{python}
 payment_type = run_sql("05_payment_type_vs_retention.sql")
 
-fig, ax = plt.subplots(figsize=(5, 4))
-ax.bar(payment_type["first_order_payment_type"], payment_type["repeat_rate_pct"], color="#2c7fb8")
-ax.set_ylabel("Repeat purchase rate (%)")
-ax.set_title("Repeat rate by first-order payment type")
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "payment_type_vs_retention.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.bar(payment_type, x="first_order_payment_type", y="repeat_rate_pct", color_discrete_sequence=[BLUE])
+fig.update_layout(title="Repeat rate by first-order payment type", xaxis_title="", yaxis_title="Repeat purchase rate (%)")
+save_fig(fig, "payment_type_vs_retention.png")
 ```
 
 This is the one place a real gap shows up. Customers who paid by voucher on their first order return at 4.52%, versus 3.12% for credit card and 3.07% for boleto. Vouchers are typically issued as compensation or promotional credit, so this could mean either that voucher driven customers are a systematically different, more price sensitive or more engaged segment, or that receiving a voucher itself prompts a second visit. Either reading points at the same lever: deliberately issuing vouchers is worth testing as a retention tool, not just a service recovery one.
@@ -168,17 +222,12 @@ This is the one place a real gap shows up. Customers who paid by voucher on thei
 ```{python}
 cohorts = run_sql("06_cohort_retention_curve.sql")
 
-fig, ax = plt.subplots(figsize=(8, 4))
-ax.plot(cohorts["cohort_month"], cohorts["repeat_rate_pct"], marker="o", color="#2c7fb8")
-ax.set_ylabel("Repeat purchase rate (%)")
-ax.set_title("Repeat rate by first-purchase month")
-ax.axvspan(cohorts["cohort_month"].iloc[-5], cohorts["cohort_month"].iloc[-1],
-           alpha=0.15, color="red", label="Truncated cohorts (little time to repeat)")
-ax.legend()
-fig.autofmt_xdate()
-fig.tight_layout()
-fig.savefig(PLOTS_DIR / "cohort_retention_curve.png", dpi=150, bbox_inches="tight")
-plt.show()
+fig = px.line(cohorts, x="cohort_month", y="repeat_rate_pct", markers=True, color_discrete_sequence=[BLUE])
+truncated_start = cohorts["cohort_month"].iloc[-5]
+truncated_end = cohorts["cohort_month"].iloc[-1]
+fig.add_vrect(x0=truncated_start, x1=truncated_end, fillcolor="red", opacity=0.15, line_width=0, annotation_text="Truncated cohorts")
+fig.update_layout(title="Repeat rate by first-purchase month", xaxis_title="", yaxis_title="Repeat purchase rate (%)")
+save_fig(fig, "cohort_retention_curve.png")
 ```
 
 The shaded months on the right are cohorts with little time to have placed a second order by the time this dataset was captured. Their drop is an artifact of the data window, not a real decline, as noted earlier in the Data section.
@@ -191,7 +240,7 @@ Repeat rates by state range from about 1.68% in Ceara (1,311 customers) up to ab
 
 ## Recommendations and Conclusion
 
-Delivery speed and stated satisfaction, the two explanations a stakeholder would reach for first, only partly explain Olist's roughly 3% repeat purchase rate. Delivery has a real but modest effect, and review score has almost none. That is the central finding of this report: it points away from two expensive levers, faster logistics and review driven seller quality programs, as the primary fix.
+Delivery speed and stated satisfaction, the two explanations a stakeholder would reach for first, only partly explain Olist's roughly 3% repeat purchase rate. Delivery has a real but modest effect, review score has almost none, and neither first-order spend nor geography shows a meaningful pattern either. That is the central finding of this report: it points away from expensive levers like faster logistics and review driven seller quality programs as the primary fix.
 
 Based on what the data does show:
 
