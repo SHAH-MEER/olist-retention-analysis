@@ -1,20 +1,21 @@
 # Data Processing and Analysis
-pandas==2.0.0
-numpy==1.24.3
+pandas==2.2.3
+numpy==2.1.3
 
 # Database
-psycopg2-binary==2.9.6
-sqlalchemy==2.0.15
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.36
+python-dotenv==1.0.1
 
 # Jupyter Environment
-jupyter==1.0.0
-ipykernel==6.22.0
-ipywidgets==8.0.6
+jupyter==1.1.1
+ipykernel==6.29.5
+ipywidgets==8.1.5
 
 # Visualization
-matplotlib==3.7.1
-seaborn==0.12.2
-plotly==5.14.1
-kaleido==0.3.0  
+matplotlib==3.9.2
+seaborn==0.13.2
+plotly==6.1.2
+kaleido==1.2.0
 
 

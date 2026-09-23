@@ -11,6 +11,18 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
+if ! command -v psql >/dev/null 2>&1; then
+    WIN_PG_BIN="/c/Program Files/PostgreSQL/18/bin"
+    if [ -x "$WIN_PG_BIN/psql" ]; then
+        export PATH="$WIN_PG_BIN:$PATH"
+    fi
+fi
+if ! command -v psql >/dev/null 2>&1; then
+    echo "ERROR: psql not found on PATH." >&2
+    echo "Add your Postgres bin directory to PATH (e.g. C:\\Program Files\\PostgreSQL\\18\\bin on Windows) and retry." >&2
+    exit 1
+fi
+
 DB_NAME="${DB_NAME:-commerce}"
 DB_USER="${DB_USER:-postgres}"
 DB_PASSWORD="${DB_PASSWORD:?Set DB_PASSWORD in .env or the environment before running this script}"
@@ -37,13 +49,22 @@ check_real_csv() {
 load_csv() {
     local csv_file=$1
     local table_name=$2
+    local full_path="$RAW_DIR/$csv_file"
 
-    check_real_csv "$RAW_DIR/$csv_file"
+    check_real_csv "$full_path"
+
+    # Native Windows psql.exe can't resolve POSIX-style paths (e.g. /c/Users/...)
+    # passed to \copy over stdin, so convert to a Windows path when cygpath is
+    # available (Git Bash / MSYS). No-op on Linux/macOS.
+    local copy_path="$full_path"
+    if command -v cygpath >/dev/null 2>&1; then
+        copy_path="$(cygpath -w "$full_path")"
+    fi
 
     echo "Truncating and loading $csv_file into $table_name..."
     psql_exec <<EOF
     TRUNCATE TABLE $table_name CASCADE;
-    \copy $table_name FROM '$RAW_DIR/$csv_file' WITH (FORMAT csv, HEADER true);
+    \copy $table_name FROM '$copy_path' WITH (FORMAT csv, HEADER true);
 EOF
 }
 

@@ -1,0 +1,202 @@
+---
+title: "Why Don't Customers Come Back?"
+subtitle: "A retention analysis of Olist's Brazilian marketplace"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    theme: cosmo
+    embed-resources: true
+
+jupyter: python3
+
+execute:
+  echo: true
+  warning: false
+---
+
+```{python}
+import os
+from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
+
+load_dotenv(Path("..") / ".env")
+
+engine = create_engine(
+    "postgresql+psycopg2://{user}:{pw}@{host}/{db}".format(
+        user=os.environ["DB_USER"],
+        pw=os.environ["DB_PASSWORD"],
+        host=os.environ.get("DB_HOST", "localhost"),
+        db=os.environ["DB_NAME"],
+    )
+)
+
+PLOTS_DIR = Path("..") / "plots"
+PLOTS_DIR.mkdir(exist_ok=True)
+ANALYSIS_DIR = Path("..") / "sql" / "analysis"
+
+def run_sql(filename):
+    return pd.read_sql(text((ANALYSIS_DIR / filename).read_text()), engine)
+```
+
+## Executive Summary
+
+Only **3.12%** of Olist customers ever place a second order: 2,997 out of 96,096 unique buyers between 2016 and 2018. That number is the real problem this report investigates.
+
+The intuitive explanations only partly hold up. Customers whose first order arrived late do repeat less often than those who received it on time (2.56% vs. 3.13%). That's a real but modest gap, not the whole story on its own. Stated satisfaction moves the needle even less: first-order review score barely affects return behavior at all (1-star customers repeat at 3.17%, 5-star at 3.21%, with no clean pattern in between). Even customers whose first order went perfectly still only come back 3% of the time, so delivery and reviews explain some of the shortfall, but not most of it.
+
+The one segment that stands out clearly is customers who paid by **voucher** on their first order, who repeat at 4.52%, meaningfully above every other payment type. That, and the category and cohort level patterns in the Analysis section, point toward the recommendations at the end of this report.
+
+## Introduction to the Problem
+
+Olist is a marketplace: it connects independent sellers across Brazil to customers, handling payments, logistics coordination, and customer service on their behalf. A marketplace's long-term health depends on repeat demand. Acquiring a customer is expensive, and a business that can't get customers to come back has to keep paying that acquisition cost forever.
+
+Olist's own order data shows a repeat-purchase rate of about 3%, which is low even by marketplace standards. This report asks a single question: **why don't customers come back, and where should Olist intervene?**
+
+## Stakeholder Requirements
+
+This report is framed as a request from Olist's VP of Growth: *"Our repeat purchase rate is stuck around 3%. Before we spend money on retention campaigns, I need to know what's actually driving it: is it delivery performance, product quality, payment friction, or something about which customers we're acquiring in the first place? And which levers, if any, are worth pulling first?"*
+
+That framing sets the scope: this is a diagnostic report, not a full causal study. It uses the data Olist already has (orders, deliveries, reviews, payments) to rule explanations in or out, and ends with concrete, data-backed recommendations rather than a prediction model.
+
+## Data
+
+This analysis uses the public Olist Brazilian e-commerce dataset (2016-2018): \~99,441 orders from \~96,096 unique customers, joined against delivery timestamps, review scores, and payment records.
+
+**Two things to know before reading the analysis:**
+
+1.  **`customer_id` is not a customer.** Olist mints a new `customer_id` for every order; `customer_unique_id` is the actual person. Grouping by `customer_id` instead of `customer_unique_id` makes every customer look like a one-time buyer (a 0% repeat rate). That's a mistake worth naming explicitly, since it's an easy one to make with this dataset.
+2.  **The dataset has a fixed end date.** A customer whose first order was in July 2018 has had almost no time to place a second order before the data was captured, while a customer from early 2017 has had over a year. The cohort chart later in this report will show a fall-off in the last few months that reflects this truncation, not a real trend. It's called out again at that point.
+
+All of the queries below read from two views built on top of the raw schema: `fact_orders` (one row per order) and `customer_retention_summary` (one row per customer, with their first-order experience and whether they returned). See `sql/views/` for their definitions.
+
+## Analysis
+
+### How low is retention, really?
+
+```{python}
+naive = run_sql("01b_naive_repeat_rate_contrast.sql")
+headline = run_sql("01_repeat_purchase_rate.sql")
+
+fig, ax = plt.subplots(figsize=(5, 4))
+ax.bar(["Naive (by customer_id)", "Correct (by customer_unique_id)"],
+       [naive["naive_repeat_rate_pct"][0], headline["repeat_rate_pct"][0]],
+       color=["#c9c9c9", "#2c7fb8"])
+ax.set_ylabel("Repeat purchase rate (%)")
+ax.set_title("Repeat rate depends entirely on how you group customers")
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "repeat_rate_headline.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+Grouping by the wrong ID hides the entire phenomenon. Grouped correctly, 3.12% of customers return, and that is the number this report investigates.
+
+### Does delivery performance explain it?
+
+```{python}
+delivery = run_sql("02_delivery_vs_retention.sql")
+
+fig, ax = plt.subplots(figsize=(5, 4))
+ax.bar(delivery["delivery_status"], delivery["repeat_rate_pct"], color="#2c7fb8")
+ax.set_ylabel("Repeat purchase rate (%)")
+ax.set_title("Repeat rate by first-order delivery outcome")
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "delivery_vs_retention.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+There is a real gap here, but it is a modest one. Customers whose first order arrived late return at 2.56%, compared with 3.13% for customers whose first order arrived on time. Even so, the on time group still only returns 3% of the time. Delivery speed has some effect on retention, but it cannot be the primary explanation for a 97% non-return rate.
+
+### Does how the customer rated their first order explain it?
+
+```{python}
+reviews = run_sql("03_review_score_vs_retention.sql")
+
+fig, ax = plt.subplots(figsize=(5, 4))
+ax.bar(reviews["first_order_review_score"].astype(str), reviews["repeat_rate_pct"], color="#2c7fb8")
+ax.set_xlabel("First-order review score")
+ax.set_ylabel("Repeat purchase rate (%)")
+ax.set_title("Repeat rate by first-order review score")
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "review_score_vs_retention.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+No. The relationship is flat and non-monotonic. Customers who left a 1-star review return at about the same rate as customers who left a 5-star review. Stated satisfaction on the first order is not predicting return behavior.
+
+### Does what they bought explain it?
+
+```{python}
+category = run_sql("04_category_vs_retention.sql")
+top = category.sort_values("repeat_rate_pct", ascending=False).head(10)
+print(top[["first_order_category", "repeat_rate_pct", "customers"]])
+
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.barh(top["first_order_category"], top["repeat_rate_pct"], color="#2c7fb8")
+ax.set_xlabel("Repeat purchase rate (%)")
+ax.set_title("Top 10 first-order categories by repeat rate")
+ax.invert_yaxis()
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "category_vs_retention.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+The top categories by repeat rate are fashio_female_clothing at 10.53% (38 customers), home_appliances at 9.14% (689 customers), and furniture_mattress_and_upholstery at 8.11% (37 customers). None of these read as naturally repeat purchase categories. Home appliances and furniture, mattresses especially, are durable goods that a household typically buys once and does not need again for years, and fashion clothing sits on a tiny base of 38 customers. Several of the top ten carry small sample sizes, so a handful of returning customers can swing the rate considerably. The category signal is real but noisy, and it does not point to an obvious cross-sell or loyalty story the way a consumables or personal care category topping this list would.
+
+### Does the payment experience explain it?
+
+```{python}
+payment_type = run_sql("05_payment_type_vs_retention.sql")
+
+fig, ax = plt.subplots(figsize=(5, 4))
+ax.bar(payment_type["first_order_payment_type"], payment_type["repeat_rate_pct"], color="#2c7fb8")
+ax.set_ylabel("Repeat purchase rate (%)")
+ax.set_title("Repeat rate by first-order payment type")
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "payment_type_vs_retention.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+This is the one place a real gap shows up. Customers who paid by voucher on their first order return at 4.52%, versus 3.12% for credit card and 3.07% for boleto. Vouchers are typically issued as compensation or promotional credit, so this could mean either that voucher driven customers are a systematically different, more price sensitive or more engaged segment, or that receiving a voucher itself prompts a second visit. Either reading points at the same lever: deliberately issuing vouchers is worth testing as a retention tool, not just a service recovery one.
+
+### Is retention getting better or worse over time?
+
+```{python}
+cohorts = run_sql("06_cohort_retention_curve.sql")
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(cohorts["cohort_month"], cohorts["repeat_rate_pct"], marker="o", color="#2c7fb8")
+ax.set_ylabel("Repeat purchase rate (%)")
+ax.set_title("Repeat rate by first-purchase month")
+ax.axvspan(cohorts["cohort_month"].iloc[-5], cohorts["cohort_month"].iloc[-1],
+           alpha=0.15, color="red", label="Truncated cohorts (little time to repeat)")
+ax.legend()
+fig.autofmt_xdate()
+fig.tight_layout()
+fig.savefig(PLOTS_DIR / "cohort_retention_curve.png", dpi=150, bbox_inches="tight")
+plt.show()
+```
+
+The shaded months on the right are cohorts with little time to have placed a second order by the time this dataset was captured. Their drop is an artifact of the data window, not a real decline, as noted earlier in the Data section.
+
+Even outside that shaded region, the un-truncated cohorts from January 2017 through April 2018 show a real falling trend: the repeat rate starts near 7.6% for the January 2017 cohort, holds in the 4.5% to 5.5% range through mid 2017, and declines fairly steadily from there to under 2% by April 2018, so retention was getting worse well before the data window truncation kicks in.
+
+### Does geography explain it?
+
+Repeat rates by state range from about 1.68% in Ceara (1,311 customers) up to about 4.18% in Rondonia (239 customers), but the three largest states by customer count, Sao Paulo (3.23% on 40,291 customers), Rio de Janeiro (3.43% on 12,379 customers), and Minas Gerais (3.07% on 11,256 customers), all sit within a few tenths of a point of the 3.12% national average. The states at the extremes are the lower volume ones, which is consistent with sampling noise rather than a real regional effect, so geography does not look like an actionable lever here.
+
+## Recommendations and Conclusion
+
+Delivery speed and stated satisfaction, the two explanations a stakeholder would reach for first, only partly explain Olist's roughly 3% repeat purchase rate. Delivery has a real but modest effect, and review score has almost none. That is the central finding of this report: it points away from two expensive levers, faster logistics and review driven seller quality programs, as the primary fix.
+
+Based on what the data does show:
+
+1. Test voucher issuance as a deliberate retention lever, not just a service recovery tool. First-order voucher payers return at 4.52%, well above every other payment type.
+2. Treat the category finding as suggestive at best, not actionable on its own. The categories with the highest first-order repeat rates, fashion clothing, home appliances, and furniture, are low volume durable goods that a household would not normally need to repurchase again soon anyway, so category alone is not a reliable lever without more data.
+3. Don't over-invest in delivery-speed guarantees as a retention strategy on this evidence alone. If delivery is still worth improving, justify it on cost or first-purchase conversion, not repeat-purchase rate.
+
+The next step beyond this report is the interactive dashboard, built separately, which lets a stakeholder slice these same metrics by state, category, and date range without waiting on a new report.
