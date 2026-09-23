@@ -15,6 +15,14 @@ Delivery speed and review score, the two explanations most people would reach fo
 - **Quarto** for the narrative report, rendered to a single self-contained HTML file
 - **Kaggle / kagglehub** for sourcing the raw dataset
 
+## Architecture
+
+![Project architecture: sources, orchestration, analytical layer, and consumption](images/project-flow.jpg)
+
+## Data model
+
+![Entity-relationship diagram of the Olist dataset](images/data_model.jpg)
+
 ## Repo structure
 
 ```
@@ -71,6 +79,8 @@ Two things worth knowing before digging into the SQL:
 ## Roadmap
 
 A lightweight Streamlit dashboard over the same two views, for ad hoc exploration beyond the fixed report, is planned as a follow-up.
+
+![Planned Streamlit dashboard mockup](images/dashbaord-mock-up.jpg)
 
 ## Data source
 
