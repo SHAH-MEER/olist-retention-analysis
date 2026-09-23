@@ -1,0 +1,42 @@
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+docs/superpowers
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS system files
+.DS_Store
+
+# Environment variables
+.env
+*.env
+
+# Egg, log, and coverage files
+*.egg-info/
+*.egg
+*.log
+*.coverage
+*.cover
+
+# Databases
+*.sqlite3
+*.db
+*.db-journal
+
+# Raw dataset (fetch via kagglehub instead of committing ~130MB of CSVs)
+data/raw/*.csv
+
+# IPython and Jupyter
+.ipynb_checkpoints/
+
+# VSCode settings
+.vscode/
+
+# PyCharm settings
+.idea/
